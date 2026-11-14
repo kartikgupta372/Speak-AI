@@ -2,17 +2,33 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # ── Required ──────────────────────────────────────────────────────────────
     SUPABASE_URL: str
     SUPABASE_KEY: str
-    ANTHROPIC_API_KEY: str
-    CLOUDINARY_CLOUD_NAME: str = ""
-    CLOUDINARY_API_KEY: str = ""
-    CLOUDINARY_API_SECRET: str = ""
+    GROQ_API_KEY: str
+
+    # ── Storage ───────────────────────────────────────────────────────────────
+    # Supabase Storage bucket name (created automatically on startup)
+    SUPABASE_STORAGE_BUCKET: str = "speak-audio"
+
+    # ── Model / limits ────────────────────────────────────────────────────────
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    GROQ_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     MAX_AUDIO_SIZE_MB: int = 10
-    # Set this in production to protect admin endpoints.
-    # If left empty, admin routes accept all requests (dev mode).
+
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    FRONTEND_API_KEY: str = ""
     ADMIN_KEY: str = ""
+
+    # ── CORS ──────────────────────────────────────────────────────────────────
+    # Comma-separated list, e.g. "http://localhost:3000,https://myapp.vercel.app"
+    ALLOWED_ORIGINS: str = "*"
+
+    @property
+    def origins_list(self) -> list[str]:
+        if self.ALLOWED_ORIGINS.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env",

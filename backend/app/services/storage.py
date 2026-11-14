@@ -1,54 +1,77 @@
 """
 storage.py
 ──────────
-Upload audio files to Cloudinary and return a public URL.
+Upload audio files to Supabase Storage and return a public URL.
 
-Falls back gracefully (returns empty string) when Cloudinary credentials
-are not configured — useful for local development without cloud storage.
+Bucket: configured via SUPABASE_STORAGE_BUCKET env var (default: "speak-audio").
+The bucket is created automatically at startup (see main.py lifespan).
+
+Falls back gracefully (returns empty string) on any error so sessions
+can still be saved without audio replay.
 """
 
 from __future__ import annotations
 
-import cloudinary
-import cloudinary.uploader
+import uuid
 
 from ..config import settings
+from ..database import get_supabase
 
 
-def _init() -> None:
-    cloudinary.config(
-        cloud_name=settings.CLOUDINARY_CLOUD_NAME,
-        api_key=settings.CLOUDINARY_API_KEY,
-        api_secret=settings.CLOUDINARY_API_SECRET,
-        secure=True,
-    )
-
-
-def upload_audio(audio_bytes: bytes, folder: str = "speak/sessions") -> str:
+def ensure_bucket() -> None:
     """
-    Upload raw audio bytes to Cloudinary.
+    Create the storage bucket if it does not already exist.
+    Called once at app startup — safe to call repeatedly.
+    """
+    supabase = get_supabase()
+    bucket = settings.SUPABASE_STORAGE_BUCKET
+    try:
+        buckets = supabase.storage.list_buckets()
+        existing = {b.name for b in buckets}
+        if bucket not in existing:
+            supabase.storage.create_bucket(
+                bucket,
+                options={"public": True, "allowed_mime_types": ["audio/*"], "file_size_limit": 20 * 1024 * 1024},
+            )
+            print(f"✓  Supabase Storage bucket '{bucket}' created.")
+        else:
+            print(f"✓  Supabase Storage bucket '{bucket}' ready.")
+    except Exception as exc:
+        print(f"⚠  Storage bucket check failed (non-fatal): {exc}")
+
+
+def upload_audio(audio_bytes: bytes, folder: str = "sessions") -> str:
+    """
+    Upload raw audio bytes to Supabase Storage.
 
     Parameters
     ----------
     audio_bytes : bytes
-        Raw audio content.
+        Raw WAV/MP3 content.
     folder : str
-        Cloudinary folder path (e.g. 'speak/sessions', 'speak/speakers').
+        Sub-folder within the bucket (e.g. 'sessions', 'speakers/obama').
 
     Returns
     -------
     str
-        Secure HTTPS URL, or empty string if upload fails / not configured.
+        Public HTTPS URL, or empty string if upload fails.
     """
-    if not settings.CLOUDINARY_CLOUD_NAME:
+    if not audio_bytes:
         return ""
 
-    _init()
-    result = cloudinary.uploader.upload(
-        audio_bytes,
-        resource_type="video",   # Cloudinary uses "video" for audio too
-        folder=folder,
-        format="mp3",
-        overwrite=False,
-    )
-    return result.get("secure_url", "")
+    supabase = get_supabase()
+    bucket = settings.SUPABASE_STORAGE_BUCKET
+    file_id = str(uuid.uuid4())
+    path = f"{folder}/{file_id}.wav"
+
+    try:
+        supabase.storage.from_(bucket).upload(
+            path=path,
+            file=audio_bytes,
+            file_options={"content-type": "audio/wav", "upsert": "true"},
+        )
+        url: str = supabase.storage.from_(bucket).get_public_url(path)
+        return url
+    except Exception as exc:
+        print(f"⚠  Audio upload failed (non-fatal): {exc}")
+        return ""

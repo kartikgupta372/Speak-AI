@@ -1,15 +1,3 @@
-"""
-speaker_matcher.py
-──────────────────
-Combines pgvector similarity results with business logic to return
-the best-matching reference speakers for a given user embedding + intent.
-
-Each result contains:
-  - speaker   : full speaker record from DB
-  - similarity: cosine similarity (0–1)
-  - match_reason: human-readable explanation
-"""
-
 from __future__ import annotations
 
 from ..services.vector_search import find_similar_speakers
@@ -21,14 +9,6 @@ def match_speakers(
     language: str = "en",
     limit: int = 3,
 ) -> list[dict]:
-    """
-    Run pgvector similarity search and enrich each result with a
-    human-readable match reason.
-
-    The SQL function already returns full speaker rows + similarity score,
-    so we don't need a second DB round-trip per speaker.
-    """
-    # Fetch more candidates than needed so we can apply light post-filtering
     candidates = find_similar_speakers(embedding, limit=limit * 2, language=language)
 
     if not candidates:
@@ -58,10 +38,6 @@ def match_speakers(
 
     return results
 
-
-# ---------------------------------------------------------------------------
-# Internal helper
-# ---------------------------------------------------------------------------
 
 def _build_reason(similarity: float, speaker: dict, intent: dict) -> str:
     pct = int(similarity * 100)

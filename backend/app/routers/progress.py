@@ -50,6 +50,8 @@ def get_user_progress(user_id: str) -> ProgressResponse:
     for row in sessions_data:
         row["feedback"]                 = row.get("feedback") or ""
         row["session_duration_seconds"] = row.get("session_duration_seconds") or 0.0
+        if "created_at" in row and "session_date" not in row:
+            row["session_date"] = row["created_at"]
         sessions.append(SessionResponse(**row))
 
     total = len(sessions)

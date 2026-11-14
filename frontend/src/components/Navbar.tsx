@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { Mic2 } from 'lucide-react'
 
 const links = [
@@ -10,8 +11,23 @@ const links = [
   { href: '/settings', label: 'Settings' },
 ]
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:8000'
+
 export default function Navbar() {
   const path = usePathname()
+  const [online, setOnline] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    const check = () =>
+      fetch(`${API_BASE}/health`)
+        .then(r => setOnline(r.ok))
+        .catch(() => setOnline(false))
+
+    check()
+    const t = setInterval(check, 30_000)
+    return () => clearInterval(t)
+  }, [])
+
   return (
     <nav style={{ position:'fixed', top:0, left:0, right:0, zIndex:50, padding:'16px 24px' }}>
       <div className="glass-card" style={{
@@ -27,6 +43,14 @@ export default function Navbar() {
             <Mic2 size={16} color="white" strokeWidth={2.5} />
           </div>
           <span style={{ fontFamily:'Syne,serif', fontWeight:700, fontSize:18, color:'white' }}>SPEAK</span>
+          {/* Backend status dot */}
+          {online !== null && (
+            <span title={online ? 'Backend online' : 'Backend offline — start the server on port 8000'} style={{
+              width: 7, height: 7, borderRadius: '50%', marginLeft: 2,
+              background: online ? '#4ADE80' : '#EF4444',
+              display: 'inline-block',
+            }} />
+          )}
         </Link>
 
         <div style={{ display:'flex', gap:4 }}>

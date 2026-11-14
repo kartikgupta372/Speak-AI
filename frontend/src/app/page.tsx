@@ -1,3 +1,5 @@
+'use client'
+
 import Link from 'next/link'
 import { ArrowRight, Play, Mic2, BarChart2, TrendingUp, Zap, Target, Activity, Volume2 } from 'lucide-react'
 import Navbar from '@/components/Navbar'

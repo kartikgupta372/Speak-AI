@@ -1,21 +1,7 @@
-"""
-sessions.py
-───────────
-Three endpoints:
-
-  POST /analyze-session
-    Record a practice session, compute scores, generate AI feedback.
-
-  POST /generate-blueprint
-    Build a personalised speaking plan for a chosen target speaker.
-
-  POST /match-speaker
-    Match speakers from a fresh audio sample (no user_id required).
-"""
-
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -36,10 +22,6 @@ from ..services.vector_search import get_speaker_avg_features
 router = APIRouter()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /analyze-session
-# ─────────────────────────────────────────────────────────────────────────────
-
 @router.post(
     "/analyze-session",
     response_model=SessionResponse,
@@ -48,9 +30,8 @@ router = APIRouter()
 async def analyze_session(
     user_id: str = Form(..., description="user_id returned during /onboard"),
     target_speaker_id: str = Form(..., description="UUID of the reference speaker to compare against"),
-    audio: UploadFile = File(..., description="Practice recording (wav/mp3/m4a, ≤ 10 MB)"),
+    audio: UploadFile = File(..., description="Practice recording (wav/mp3/m4a, <= 10 MB)"),
 ) -> SessionResponse:
-    # ── 1. Read & validate audio ──────────────────────────────────────────────
     audio_bytes = await audio.read()
     max_bytes = settings.MAX_AUDIO_SIZE_MB * 1024 * 1024
     if len(audio_bytes) > max_bytes:
@@ -58,7 +39,6 @@ async def analyze_session(
     if len(audio_bytes) == 0:
         raise HTTPException(status_code=422, detail="Audio file is empty.")
 
-    # ── 2. Extract features ───────────────────────────────────────────────────
     try:
         features = extract_features(audio_bytes)
     except ValueError as exc:
@@ -66,7 +46,6 @@ async def analyze_session(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Audio processing failed: {exc}")
 
-    # ── 3. Fetch target speaker avg features ──────────────────────────────────
     target_features = get_speaker_avg_features(target_speaker_id)
     if target_features is None:
         raise HTTPException(
@@ -77,17 +56,14 @@ async def analyze_session(
             ),
         )
 
-    # ── 4. Upload audio (non-fatal) ───────────────────────────────────────────
     audio_url = ""
     try:
         audio_url = upload_audio(audio_bytes, folder="speak/sessions")
     except Exception:
         pass
 
-    # ── 5. Compute scores ─────────────────────────────────────────────────────
     scores = compute_session_scores(features, target_features)
 
-    # ── 6. Gather context from DB ─────────────────────────────────────────────
     supabase = get_supabase()
 
     speaker_row = (
@@ -110,7 +86,6 @@ async def analyze_session(
     )
     intent = user_row.data.get("onboarding_goals") if user_row.data else None
 
-    # ── 7. Fetch last session for progress comparison ─────────────────────────
     prev_result = (
         supabase.table("user_sessions")
         .select("confidence_score, clarity_score, pacing_score, stress_accuracy")
@@ -121,7 +96,6 @@ async def analyze_session(
     )
     previous_session = prev_result.data[0] if prev_result.data else None
 
-    # ── 8. Generate AI feedback ───────────────────────────────────────────────
     try:
         feedback_text = generate_session_feedback(
             user_features=features,
@@ -132,13 +106,11 @@ async def analyze_session(
             previous_session=previous_session,
         )
     except Exception:
-        # Degrade gracefully — scores are still returned even if LLM fails.
         feedback_text = (
             "Session recorded successfully. "
             "Detailed AI feedback is temporarily unavailable — please try again shortly."
         )
 
-    # ── 9. Persist session ────────────────────────────────────────────────────
     session_id = str(uuid.uuid4())
     acoustic_features_dict = {
         "pitch_avg":             features.pitch_avg,
@@ -172,6 +144,7 @@ async def analyze_session(
         id=session_id,
         user_id=user_id,
         speaker_id=target_speaker_id,
+        session_date=datetime.now(timezone.utc),
         confidence_score=scores["confidence_score"],
         clarity_score=scores["clarity_score"],
         pacing_score=scores["pacing_score"],
@@ -181,10 +154,6 @@ async def analyze_session(
         acoustic_features=acoustic_features_dict,
     )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /generate-blueprint
-# ─────────────────────────────────────────────────────────────────────────────
 
 class BlueprintRequest(BaseModel):
     user_id: str
@@ -197,7 +166,6 @@ class BlueprintRequest(BaseModel):
 async def generate_blueprint_endpoint(req: BlueprintRequest) -> dict:
     supabase = get_supabase()
 
-    # Fetch user profile
     user_row = (
         supabase.table("user_profiles")
         .select("*")
@@ -211,7 +179,6 @@ async def generate_blueprint_endpoint(req: BlueprintRequest) -> dict:
             detail="User profile not found. Please complete onboarding first.",
         )
 
-    # Fetch target speaker
     speaker_row = (
         supabase.table("speakers")
         .select("*")
@@ -222,7 +189,6 @@ async def generate_blueprint_endpoint(req: BlueprintRequest) -> dict:
     if not speaker_row.data:
         raise HTTPException(status_code=404, detail="Target speaker not found.")
 
-    # Fetch target speaker avg acoustic features
     target_features = get_speaker_avg_features(req.target_speaker_id)
     if target_features is None:
         raise HTTPException(
@@ -230,7 +196,6 @@ async def generate_blueprint_endpoint(req: BlueprintRequest) -> dict:
             detail="No voice embeddings found for the chosen speaker.",
         )
 
-    # Re-parse intent if new goals/scenario were supplied; otherwise use stored
     intent = user_row.data.get("onboarding_goals") or {}
     if req.goals or req.scenario:
         from ..agents.intent_parser import parse_intent
@@ -253,17 +218,13 @@ async def generate_blueprint_endpoint(req: BlueprintRequest) -> dict:
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /match-speaker
-# ─────────────────────────────────────────────────────────────────────────────
-
 @router.post(
     "/match-speaker",
     response_model=list[SpeakerMatchResult],
     summary="Match reference speakers from an audio sample",
 )
 async def match_speaker_from_audio(
-    audio: UploadFile = File(..., description="Audio sample (wav/mp3/m4a, ≤ 10 MB)"),
+    audio: UploadFile = File(..., description="Audio sample (wav/mp3/m4a, <= 10 MB)"),
     language: str = Form("en"),
     goals: str = Form(""),
     scenario: str = Form(""),

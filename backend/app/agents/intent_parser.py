@@ -2,7 +2,7 @@
 intent_parser.py
 ────────────────
 Parses free-text user goals + scenario into a normalised intent dict
-using the Anthropic Claude API.
+using the Groq API (llama-4-scout).
 
 Output schema:
   {
@@ -17,14 +17,14 @@ from __future__ import annotations
 
 import json
 
-import anthropic
+from groq import Groq
 
 from ..config import settings
 
 
 def parse_intent(goals: str, scenario: str) -> dict:
     """Return a normalised intent dict derived from user-supplied text."""
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = Groq(api_key=settings.GROQ_API_KEY)
 
     prompt = f"""You are parsing user input for a speech coaching app.
 Given the user's goals and scenario, return a JSON object — no preamble, no markdown fences.
@@ -40,13 +40,13 @@ Scenario: {scenario}
 
 JSON output only:"""
 
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    response = client.chat.completions.create(
+        model=settings.GROQ_MODEL,
         max_tokens=256,
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw: str = message.content[0].text.strip()
+    raw: str = response.choices[0].message.content.strip()
 
     # Strip accidental markdown fences
     if raw.startswith("```"):

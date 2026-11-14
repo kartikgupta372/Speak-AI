@@ -1,25 +1,3 @@
-"""
-admin.py
-────────
-Admin-only endpoints for the offline reference-speaker ingestion pipeline.
-
-Authentication:
-  Set ADMIN_KEY in your .env file.
-  All requests must include the header:  X-Admin-Key: <your-key>
-  If ADMIN_KEY is empty (dev mode), all requests are accepted.
-
-Endpoints:
-  POST /admin/ingest-speaker-audio
-    Ingest one audio segment for a reference speaker:
-      – extract acoustic features
-      – generate 384-dim embedding
-      – upload audio to Cloudinary
-      – insert into speaker_audio_segments + voice_embeddings
-
-  POST /admin/speakers
-    Create a new reference speaker record.
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -37,15 +15,10 @@ from ..services.vector_search import _vec_to_str
 router = APIRouter(prefix="/admin")
 
 
-# ── Auth dependency ───────────────────────────────────────────────────────────
-
 async def require_admin(x_admin_key: str = Header(default="")) -> None:
-    """Reject the request if ADMIN_KEY is configured and the header is wrong."""
     if settings.ADMIN_KEY and x_admin_key != settings.ADMIN_KEY:
         raise HTTPException(status_code=403, detail="Invalid or missing X-Admin-Key header.")
 
-
-# ── POST /admin/speakers ──────────────────────────────────────────────────────
 
 @router.post("/speakers", response_model=SpeakerResponse, dependencies=[Depends(require_admin)])
 async def create_speaker(
@@ -57,7 +30,6 @@ async def create_speaker(
     image_url: str = Form(""),
     bio: str = Form(""),
 ) -> SpeakerResponse:
-    """Create a new reference speaker record (no audio yet)."""
     supabase = get_supabase()
     result = supabase.table("speakers").insert(
         {
@@ -76,8 +48,6 @@ async def create_speaker(
     return result.data[0]
 
 
-# ── POST /admin/ingest-speaker-audio ─────────────────────────────────────────
-
 @router.post(
     "/ingest-speaker-audio",
     summary="Ingest one audio segment for a reference speaker",
@@ -87,9 +57,8 @@ async def ingest_speaker_audio(
     speaker_id: str = Form(..., description="UUID of an existing speaker record"),
     segment_name: str = Form(..., description="Human label, e.g. 'inauguration_speech_2009_clip1'"),
     quality_score: int = Form(80, ge=0, le=100),
-    audio: UploadFile = File(..., description="Audio clip (wav/mp3, ≤ 10 MB)"),
+    audio: UploadFile = File(..., description="Audio clip (wav/mp3, <= 10 MB)"),
 ) -> dict:
-    # ── Read & validate ───────────────────────────────────────────────────────
     audio_bytes = await audio.read()
     max_bytes = settings.MAX_AUDIO_SIZE_MB * 1024 * 1024
     if len(audio_bytes) > max_bytes:
@@ -97,7 +66,6 @@ async def ingest_speaker_audio(
     if len(audio_bytes) == 0:
         raise HTTPException(status_code=422, detail="Audio file is empty.")
 
-    # ── Verify speaker exists ─────────────────────────────────────────────────
     supabase = get_supabase()
     spk = (
         supabase.table("speakers")
@@ -109,7 +77,6 @@ async def ingest_speaker_audio(
     if not spk.data:
         raise HTTPException(status_code=404, detail=f"Speaker {speaker_id} not found.")
 
-    # ── Extract features & embedding ──────────────────────────────────────────
     try:
         features = extract_features(audio_bytes)
     except ValueError as exc:
@@ -119,14 +86,12 @@ async def ingest_speaker_audio(
 
     embedding = generate_embedding(features)
 
-    # ── Upload audio ──────────────────────────────────────────────────────────
     audio_url = ""
     try:
         audio_url = upload_audio(audio_bytes, folder=f"speak/speakers/{speaker_id}")
     except Exception:
         pass
 
-    # ── Insert speaker_audio_segments ─────────────────────────────────────────
     segment_id = str(uuid.uuid4())
     supabase.table("speaker_audio_segments").insert(
         {
@@ -139,14 +104,13 @@ async def ingest_speaker_audio(
         }
     ).execute()
 
-    # ── Insert voice_embeddings ───────────────────────────────────────────────
     embedding_id = str(uuid.uuid4())
     supabase.table("voice_embeddings").insert(
         {
             "id":                    embedding_id,
             "speaker_id":            speaker_id,
             "segment_id":            segment_id,
-            "embedding":             _vec_to_str(embedding),   # pgvector text literal
+            "embedding":             _vec_to_str(embedding),
             "pitch_avg":             features.pitch_avg,
             "pitch_std":             features.pitch_std,
             "pace_syllables_per_sec": features.pace_syllables_per_sec,
